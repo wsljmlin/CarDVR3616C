@@ -1,0 +1,995 @@
+#ifdef __cplusplus
+	extern "C"{
+#endif
+
+/****************************************************************
+	include
+****************************************************************/
+#include "base_mw_overlay.h"
+#include "base_mw_osd.h"
+/****************************************************************
+	macro / enum
+****************************************************************/
+//#define USE_OVERLAY_MW_LOG
+#ifdef USE_OVERLAY_MW_LOG
+#define debug_log(fmt, args...) fprintf(stdout, "[ OVERLAY MW ] : "fmt, ##args)
+#define debug_log_funcIn() fprintf(stdout, "in %s\n", __func__)
+#define debug_log_funcOut() fprintf(stdout, "out %s\n", __func__)
+#define debug_log_printPara(para) fprintf(stdout, "%s : 0x%x(%d) @ %p\n", #para, (para), (para), &(para))
+#define debug_log_showErr(err) fprintf(stderr, "%s <%d> : Error <%d>\n", __func__, __LINE__, err)
+#else
+#define debug_log(fmt, args...)
+#define debug_log_funcIn()
+#define debug_log_funcOut()
+#define debug_log_printPara(para)
+#define debug_log_showErr(err)
+#endif
+/*two align*/
+#define BASE_MW_OVERLAY_RECT(val) ((val)=((val)%2==0)?(val):((val)+1))
+
+#define BASE_MW_OVERLAY_POINT(val) ((val)=((val)%4==0)?(val):((val)-(val)%4))
+
+/*get region handle number*/
+#define BASE_MW_OVERLAY_GET_RGN_HANDLE(Uid,ViCh,rgnNum)((6<<(Uid))+(4<<(ViCh))+(rgnNum))
+
+#define BASE_MW_OVERLAY_POINTX 40
+#define BASE_MW_OVERLAY_POINTY 24
+
+/*record each vi channel attoch region number*/
+LONG glViRegNum[3]={0,0,0};
+
+/*show time*/
+RGN_HANDLE gsHandle[3]={-1,-1,-1};
+
+/* the coordinate of show time region */
+LONG lCoordinateFirst[3]={1,1,1};
+LONG lHandleFirst[3]={1,1,1};
+LONG lAbscissa[3]={0,0,0};
+LONG lOrdinate[3]={0,0,0};
+/*timer id*/
+LONG lTimerId[3];
+
+LONG lTimerFlag;
+
+#if 1
+	LONG lChnID[3]={0,0,0}; //3518 only support attach group chn0
+#else
+	LONG lChnID[3]={0,1,2};
+#endif
+
+/*********************************************************************************
+	prototype
+**********************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ChgDynamicAttr(sBASE_MW_OVERLAY_ATTR* psOverlayAttr);
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ChgStaticAttr(sBASE_MW_OVERLAY_ATTR* psOverlayAttr);
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_getTwoAlignVal(sBASE_MW_OVERLAY_ATTR* psOverlayAttr);
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ShowTime(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, CHAR* pcTimeStr, LONG lLen, const LONG lViChn);
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ShowPicture(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, CHAR* pcPicName);
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ShowString(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, CHAR* pcString);
+/*********************************************************************************
+	function
+**********************************************************************************/
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_INIT(sBASE_MW_OVERLAY* psOverlay,  sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: init overlay attribute
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_INIT(sBASE_MW_OVERLAY_ATTR* psOverlayAttr){
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+	sBASE_MW_OVERLAY_USE* psOverlayUse=NULL;
+	LONG lRegionTmp = 0;
+	LONG i;
+	
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+		
+		for(lRegionTmp=0; lRegionTmp!=BASE_MW_OVERLAY_REGIONCNT; lRegionTmp++) {
+			psOverlayUse = psOverlayAttr->sOverlayUse+ lRegionTmp;
+
+			/* init uid */
+			for(i=0;i<3;i++) {
+				SETDEFAULTVAL(psOverlayUse->lUID[i], -1);
+				SETDEFAULTVAL(psOverlayUse->eState[i], BASE_MW_OVERLAY_NOTSTART);
+				SETDEFAULTVAL(psOverlayUse->lRegNum[i], -1);
+				SETDEFAULTVAL(psOverlayUse->eShowTimeState[i], eBASE_MW_NOT_SHOWTIME);
+			}
+
+		}
+		SETDEFAULTVAL(psOverlayAttr->eChangeType, BASE_MW_OVERLAY_CHANGE_TYPE_BGALPHA);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayAttr.enType, OVERLAY_RGN);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayAttr.unAttr.stOverlay.enPixelFmt, PIXEL_FORMAT_RGB_1555);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayAttr.unAttr.stOverlay.u32BgColor, 0x0);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayChnAttr.bShow, 0);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayChnAttr.enType, OVERLAY_RGN);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayChnAttr.unChnAttr.stOverlayChn.u32BgAlpha, 128);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayChnAttr.unChnAttr.stOverlayChn.u32FgAlpha, 64);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayChnAttr.unChnAttr.stOverlayChn.u32Layer, 0);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayChnAttr.unChnAttr.stOverlayChn.stQpInfo.bAbsQp,HI_FALSE);
+		SETDEFAULTVAL(psOverlayAttr->stOverlayChnAttr.unChnAttr.stOverlayChn.stQpInfo.s32Qp,0);
+		SETDEFAULTVAL(psOverlayAttr->sOverlayChn.s32DevId, 0);
+		SETDEFAULTVAL(psOverlayAttr->sOverlayChn.enModId, HI_ID_GROUP);	
+
+	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_UpdataRegMessage(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: updata each region message
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_UpdataRegMessage(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+		psOverlayAttr->sOverlayUse[psOverlayAttr->lRgnHandle].lRegNum[psOverlayAttr->lGroupCh]=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+		psOverlayAttr->sOverlayUse[psOverlayAttr->lRgnHandle].eState[psOverlayAttr->lGroupCh]=BASE_MW_OVERLAY_ISSTART;
+		psOverlayAttr->sOverlayUse[psOverlayAttr->lRgnHandle].lUID[psOverlayAttr->lGroupCh]=psOverlayAttr->lUID;
+
+	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_getTwoAlignVal(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: keep region 2 Align
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_getTwoAlignVal(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+	
+		 BASE_MW_OVERLAY_RECT(psOverlayAttr->sRegRect.lWidth);
+		 BASE_MW_OVERLAY_RECT(psOverlayAttr->sRegRect.lHeight);
+		 BASE_MW_OVERLAY_POINT(psOverlayAttr->sRegRect.lStartX);
+		 BASE_MW_OVERLAY_POINT(psOverlayAttr->sRegRect.lStartY);
+		 if(psOverlayAttr->sRegRect.lHeight<16)
+			psOverlayAttr->sRegRect.lHeight=16;
+		 if(psOverlayAttr->sRegRect.lWidth<16)
+			psOverlayAttr->sRegRect.lWidth=16;
+		 
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_GetPicSize(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, LONG* lWidth, LONG* lHeight)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr, LONG* lWidth, LONG* lHeight
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note		: get picture size
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_GetPicSize(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, LONG* lWidth, LONG* lHeight)
+{
+	switch (psOverlayAttr->lGroupCh)
+	{
+		case BASE_RES_HD1080:
+			*lWidth = 1920;
+			*lHeight = 1080;
+			break;
+			
+		case BASE_RES_HD720:
+			*lWidth = 1280;
+			*lHeight = 720;
+			break;
+			
+		case BASE_RES_SD480:
+			*lWidth = 720;
+			*lHeight = 480;
+			break;
+		default:
+			return BASE_MW_OVERLAY_FAIL;
+	}
+	return BASE_MW_OVERLAY_SUCCESS;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_checkValue(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note		: check the legality of the input value
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_checkVal(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet = BASE_MW_OVERLAY_SUCCESS;
+	LONG lWidth;
+	LONG lHeight;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+
+		eBASE_MW_OVERLAY_GetPicSize(psOverlayAttr, &lWidth, &lHeight);
+
+		if(psOverlayAttr->sRegRect.lStartY<0 || psOverlayAttr->sRegRect.lStartY>lHeight){
+			debug_info("the ordinate is illegal!\n");
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		if(psOverlayAttr->sRegRect.lHeight<=0 || psOverlayAttr->sRegRect.lHeight>lHeight){
+			debug_info("the height is illegal!\n");
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		if(psOverlayAttr->sRegRect.lStartY+psOverlayAttr->sRegRect.lHeight>lHeight){
+			debug_info("the sum of input height and startY is more than height of current group ch!\n");
+			return BASE_MW_OVERLAY_FAIL;
+		}		
+		if(psOverlayAttr->sRegRect.lStartX<0 || psOverlayAttr->sRegRect.lStartX>lWidth){
+			debug_info("the abscissa is illegal!\n");
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		if(psOverlayAttr->sRegRect.lWidth<=0 || psOverlayAttr->sRegRect.lWidth>lWidth){
+			debug_info("the width is illegal!\n");
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		if(psOverlayAttr->sRegRect.lStartX+psOverlayAttr->sRegRect.lWidth>lWidth){
+			debug_info("the sum of input width and startX is more than width of current group ch!\n");
+			return BASE_MW_OVERLAY_FAIL;
+		}
+
+	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_START(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: create region and attach to vi
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_START(sBASE_MW_OVERLAY_ATTR* psOverlayAttr){
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+	RGN_HANDLE sHandle;
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+		
+		/*vi channel region number whether reach max*/
+		if(BASE_MW_OVERLAY_REGIONCNT == glViRegNum[psOverlayAttr->lGroupCh]) {
+			debug_info("Vi channel [%ld] region num reach max!\n",psOverlayAttr->lGroupCh);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		/*overlay region handle number*/
+		sHandle=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+
+		/*region have created?*/
+		if(psOverlayAttr->sOverlayUse[psOverlayAttr->lRgnHandle].eState[psOverlayAttr->lGroupCh] == BASE_MW_OVERLAY_ISSTART) {
+			//debug_info("region [%d] have created!\n",sHandle);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		
+		/* check the input values whether are legit */
+		eRet=eBASE_MW_OVERLAY_checkVal(psOverlayAttr);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet) {
+			debug_info("the input value is illegal!\n");
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		
+		/*keep attr of zoom 2 aligned and height >= 16*/
+		eBASE_MW_OVERLAY_getTwoAlignVal(psOverlayAttr);
+		
+		/*create overlay regions*/
+		psOverlayAttr->stOverlayAttr.unAttr.stOverlay.stSize.u32Width  = psOverlayAttr->sRegRect.lWidth;
+		psOverlayAttr->stOverlayAttr.unAttr.stOverlay.stSize.u32Height = psOverlayAttr->sRegRect.lHeight;
+		eRet = HI_MPI_RGN_Create(sHandle, &psOverlayAttr->stOverlayAttr);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		{
+			debug_info("%s: HI_MPI_RGN_Create (%d) failed with %#x!\n",__FUNCTION__, sHandle, eRet);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+
+		/*display overlay regions to venc groups*/
+		psOverlayAttr->sOverlayChn.s32ChnId = lChnID[psOverlayAttr->lGroupCh];
+		psOverlayAttr->stOverlayChnAttr.bShow=1;
+		psOverlayAttr->stOverlayChnAttr.unChnAttr.stOverlayChn.stPoint.s32X =psOverlayAttr->sRegRect.lStartX;
+		psOverlayAttr->stOverlayChnAttr.unChnAttr.stOverlayChn.stPoint.s32Y =psOverlayAttr->sRegRect.lStartY;
+		eRet = HI_MPI_RGN_AttachToChn(sHandle, &psOverlayAttr->sOverlayChn, &psOverlayAttr->stOverlayChnAttr);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		{
+			debug_info("%s: HI_MPI_RGN_AttachToChn (%d) failed with %#x!\n",__FUNCTION__, sHandle, eRet);
+			HI_MPI_RGN_Destroy(sHandle);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		eRet=eBASE_MW_OVERLAY_UpdataRegMessage(psOverlayAttr);	
+		glViRegNum[psOverlayAttr->lGroupCh]++;
+		
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_ChgZoom(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: change the width and height of region
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ChgStaticAttr(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+   	RGN_CHN_ATTR_S stOverlayChnAttr;
+	RGN_HANDLE sHandle;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+
+		/*get point*/
+		sHandle=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+		psOverlayAttr->sOverlayChn.s32ChnId = psOverlayAttr->lGroupCh;
+	    	eRet = HI_MPI_RGN_GetDisplayAttr(sHandle, &psOverlayAttr->sOverlayChn, &stOverlayChnAttr);
+	    	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+	    	{
+	       		 debug_info("%s: HI_MPI_RGN_GetDisplayAttr (%d)) failed with %#x!\n", __FUNCTION__, sHandle, eRet);
+	        	return BASE_MW_OVERLAY_FAIL;
+	    	}
+			
+
+		if(psOverlayAttr->sOverlayUse[psOverlayAttr->lRgnHandle].eState[psOverlayAttr->lGroupCh] == BASE_MW_OVERLAY_ISSTART){
+			eRet = eBASE_MW_OVERLAY_STOP(psOverlayAttr);
+			if(BASE_MW_OVERLAY_SUCCESS!=eRet)
+			{
+				debug_info("[%s:%d]:stop overlay error\n",__FUNCTION__,__LINE__);
+				return BASE_MW_OVERLAY_FAIL;
+			}
+		}else{
+			debug_info("region have not create!\n");
+			return BASE_MW_OVERLAY_SUCCESS;
+		}
+
+		psOverlayAttr->sRegRect.lStartX=stOverlayChnAttr.unChnAttr.stOverlayChn.stPoint.s32X;
+	        psOverlayAttr->sRegRect.lStartY=stOverlayChnAttr.unChnAttr.stOverlayChn.stPoint.s32Y;
+
+		eRet=eBASE_MW_OVERLAY_START(psOverlayAttr);
+		if(BASE_MW_OVERLAY_SUCCESS!=eRet)
+		{
+			debug_info("[%s:%d]:start overlay error\n",__FUNCTION__,__LINE__);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+   	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_ChgDynamicAttr(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: osd region change (bgAlpha, fgAlpha, layer)
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ChgDynamicAttr(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+   	RGN_CHN_ATTR_S stOverlayChnAttr;
+	RGN_HANDLE sHandle;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{		
+
+		sHandle=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+		psOverlayAttr->sOverlayChn.s32ChnId = psOverlayAttr->lGroupCh;
+		eRet = HI_MPI_RGN_GetDisplayAttr(sHandle, &psOverlayAttr->sOverlayChn, &stOverlayChnAttr);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		{
+			debug_info("%s: HI_MPI_RGN_GetDisplayAttr (%d)) failed with %#x!\n",__FUNCTION__, sHandle, eRet);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+
+		switch (psOverlayAttr->eChangeType)
+		{
+			case BASE_MW_OVERLAY_CHANGE_TYPE_FGALPHA:
+		    		stOverlayChnAttr.unChnAttr.stOverlayChn.u32FgAlpha = psOverlayAttr->lFAlpha;
+		    		break;
+			case BASE_MW_OVERLAY_CHANGE_TYPE_BGALPHA:
+		    		stOverlayChnAttr.unChnAttr.stOverlayChn.u32BgAlpha = psOverlayAttr->lBAlpha;
+		    		break;
+			case BASE_MW_OVERLAY_CHANGE_TYPE_LAYER:
+		    		stOverlayChnAttr.unChnAttr.stOverlayChn.u32Layer = psOverlayAttr->lLayer;
+		    		break;
+			case BASE_MW_OVERLAY_CHANGE_TYPE_POSITION:
+	    			stOverlayChnAttr.unChnAttr.stOverlayChn.stPoint.s32X = psOverlayAttr->sRegRect.lStartX;
+	    			stOverlayChnAttr.unChnAttr.stOverlayChn.stPoint.s32Y = psOverlayAttr->sRegRect.lStartY;
+		    		break;
+			default:
+		    		printf("%s: input paramter invaild!\n", __FUNCTION__);
+		    		return BASE_MW_OVERLAY_FAIL;
+		}
+		eRet = HI_MPI_RGN_SetDisplayAttr(sHandle, &psOverlayAttr->sOverlayChn, &stOverlayChnAttr);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		{
+			debug_info("%s: HI_MPI_RGN_SetDisplayAttr (%d)) failed with %#x!\n",__FUNCTION__, sHandle, eRet);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+
+
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+    	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_getViWidth(LONG lViCh, LONG* lViWidth)
+* @param		: LONG lViCh, LONG* lViWidth
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: get width of vi
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_getViWidth(LONG lGroupCh, LONG* lWidth) {
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+		switch(lGroupCh) {
+			case BASE_RES_HD1080:
+#ifdef TEST_CHANNEL0_720P
+				*lWidth = 1280;
+#else
+				*lWidth=1920;
+#endif
+				break;
+			case BASE_RES_HD720:
+				*lWidth=1280;
+				break;
+			case BASE_RES_SD480:
+				*lWidth=720;
+				break;
+			default:
+				break;
+		}
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+    return BASE_MW_OVERLAY_SUCCESS;
+}
+
+/*******************************************************************************
+* @brief		: vBASE_freeBitmap(BITMAP_S stBitmap)
+* @param		: BITMAP_S stBitmap
+* @retval		: void
+* @note 		: free bitmap
+*******************************************************************************/
+void vBASE_freeBitmap(BITMAP_S stBitmap) {
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+		if (NULL != stBitmap.pData)
+	    	{
+	        	free(stBitmap.pData);
+	        	stBitmap.pData = NULL;
+	    	}
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+   
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_ShowPicture(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, UCHAR* pcPicName)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr, UCHAR* pcPicName
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: show picture
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ShowPicture(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, CHAR* pcPicName) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+	BITMAP_S stBitmap;
+	RGN_HANDLE sHandle;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+		stBitmap.pData = NULL;
+		eRet = eBASE_MW_OSD_LoadBmp((const char*)pcPicName, &stBitmap);
+	    	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+	    	{
+	        	debug_info("%s: load bmp failed with %#x!\n", __FUNCTION__, eRet);
+	        	return BASE_MW_OVERLAY_FAIL;
+	    	}
+
+		/*display picture in the default location without inputing position*/
+		if(-1 == psOverlayAttr->sRegRect.lStartX || -1 == psOverlayAttr->sRegRect.lStartY) {
+			psOverlayAttr->sRegRect.lStartX=BASE_MW_OVERLAY_POINTX;
+			psOverlayAttr->sRegRect.lStartY=2*BASE_MW_OVERLAY_POINTY;
+		}
+		/*Let the regional area and image size to match*/
+		psOverlayAttr->sRegRect.lWidth=stBitmap.u32Width;
+		psOverlayAttr->sRegRect.lHeight=stBitmap.u32Height;
+		eBASE_MW_OVERLAY_START(psOverlayAttr);
+		
+		sHandle=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+	    	eRet = HI_MPI_RGN_SetBitMap(sHandle,&stBitmap);
+	    	if(eRet != BASE_MW_OVERLAY_SUCCESS)
+	    	{
+			free(stBitmap.pData);
+			debug_info("%s: HI_MPI_RGN_SetBitMap failed with %#x!\n", __FUNCTION__, eRet);
+	        	return BASE_MW_OVERLAY_FAIL;
+	    	}
+	    
+		vBASE_freeBitmap(stBitmap);
+
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+    return BASE_MW_OVERLAY_SUCCESS;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_ShowString(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, UCHAR* pcString)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr, UCHAR* pcString
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: show string
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ShowString(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, CHAR* pcString) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+	BITMAP_S stBitmap;
+	RGN_HANDLE sHandle;
+	LONG lLen;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+
+		stBitmap.pData = NULL;
+		lLen=strlen((char*)pcString);
+
+		eRet = eBASE_MW_OSD_StrToBitmap((CHAR*)pcString, lLen, &stBitmap);
+	    	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+	    	{
+	        	debug_info("%s: load bmp failed with %#x!\n", __FUNCTION__, eRet);
+	        	return BASE_MW_OVERLAY_FAIL;
+	    	}
+		
+		/*display string in the default location without inputing position*/
+		if(-1 == psOverlayAttr->sRegRect.lStartX || -1 == psOverlayAttr->sRegRect.lStartY) {
+			psOverlayAttr->sRegRect.lStartX=BASE_MW_OVERLAY_POINTX;
+			psOverlayAttr->sRegRect.lStartY=BASE_MW_OVERLAY_POINTY;
+		}
+
+		/*Let the regional area and image size to match*/
+		psOverlayAttr->sRegRect.lWidth=stBitmap.u32Width;
+		psOverlayAttr->sRegRect.lHeight=stBitmap.u32Height;
+		eBASE_MW_OVERLAY_START(psOverlayAttr);
+
+		sHandle=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+	    	eRet = HI_MPI_RGN_SetBitMap(sHandle,&stBitmap);
+	    	if(eRet != BASE_MW_OVERLAY_SUCCESS)
+	    	{
+			free(stBitmap.pData);
+			debug_info("%s: HI_MPI_RGN_SetBitMap failed with %#x!\n", __FUNCTION__, eRet);
+	        	return BASE_MW_OVERLAY_FAIL;
+	    	}
+
+		vBASE_freeBitmap(stBitmap);
+
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+    return BASE_MW_OVERLAY_SUCCESS;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_ShowTime(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: show time
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ShowTime(sBASE_MW_OVERLAY_ATTR* psOverlayAttr, CHAR* pcTimeStr, LONG lLen, const LONG lViChn) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+	BITMAP_S stBitmap;
+	LONG lViWidth;
+	
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+		stBitmap.pData = NULL;
+
+		/*get bmp according to string*/
+		eRet=eBASE_MW_OSD_StrToBitmap(pcTimeStr, lLen, &stBitmap);
+	    	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+	    	{
+	        	debug_info("%s: load bmp failed with %#x!\n", __FUNCTION__, eRet);
+	        	return BASE_MW_OVERLAY_FAIL;
+	    	}
+
+			/*get width of current vi*/
+			eBASE_MW_OVERLAY_getViWidth(lViChn, &lViWidth);
+				
+			/*display picture in the default location without inputing position*/
+			if(-1 == psOverlayAttr->sRegRect.lStartX || -1 == psOverlayAttr->sRegRect.lStartY) {
+				psOverlayAttr->sRegRect.lStartX=lViWidth-lLen*16-BASE_MW_OVERLAY_POINTX;
+				psOverlayAttr->sRegRect.lStartY=BASE_MW_OVERLAY_POINTY;
+			}
+			
+			if(lCoordinateFirst[psOverlayAttr->lGroupCh]) {
+				lAbscissa[psOverlayAttr->lGroupCh]=psOverlayAttr->sRegRect.lStartX;
+				lOrdinate[psOverlayAttr->lGroupCh]=psOverlayAttr->sRegRect.lStartY;
+				lCoordinateFirst[psOverlayAttr->lGroupCh]=0;
+			}
+			psOverlayAttr->sRegRect.lStartX=lAbscissa[psOverlayAttr->lGroupCh];
+			psOverlayAttr->sRegRect.lStartY=lOrdinate[psOverlayAttr->lGroupCh];
+
+			if(lHandleFirst[psOverlayAttr->lGroupCh]) {
+				/*record the handle of region that used to show time*/
+				gsHandle[psOverlayAttr->lGroupCh]=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+				lHandleFirst[psOverlayAttr->lGroupCh]=0;
+			}
+			psOverlayAttr->lRgnHandle=gsHandle[psOverlayAttr->lGroupCh]-(6<<psOverlayAttr->lUID)-(4<<psOverlayAttr->lGroupCh);;
+
+			
+			/*Let the regional area and image size to match*/
+			psOverlayAttr->sRegRect.lWidth=stBitmap.u32Width;
+			psOverlayAttr->sRegRect.lHeight=stBitmap.u32Height;
+			eBASE_MW_OVERLAY_START(psOverlayAttr);
+		
+		    	eRet = HI_MPI_RGN_SetBitMap(gsHandle[lViChn],&stBitmap);
+		    	if(eRet != BASE_MW_OVERLAY_SUCCESS)
+		    	{
+		    		free(stBitmap.pData);
+		        	debug_info("%s: HI_MPI_RGN_SetBitMap failed with %#x!\n", __FUNCTION__, eRet);
+		        	return BASE_MW_OVERLAY_FAIL;
+		    	}
+		
+		vBASE_freeBitmap(stBitmap);
+
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+    return BASE_MW_OVERLAY_SUCCESS;
+}
+/*******************************************************************************
+* @brief		: lBASE_MW_VO_HIFB_getTimeString(char* pcTimeStr,LONG* lStrLen)
+* @param		: char* pcTimeStr,LONG* lStrLen
+* @retval		: LONG
+* @note 		: get time string
+*******************************************************************************/
+LONG lBASE_MW_getTimeString(char* pcTimeStr,LONG* lStrLen){
+	struct tm *tm_loc;
+	time_t tTime;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{	
+		/* init time */
+		tTime = time(NULL);
+		tm_loc = localtime(&tTime);
+
+		/* make file name */
+		memset(pcTimeStr, 0, sizeof(pcTimeStr));
+		*lStrLen=sprintf(pcTimeStr, "%d-%02d-%02d  %02d:%02d:%02d", 
+			 1900 + tm_loc->tm_year, tm_loc->tm_mon + 1, tm_loc->tm_mday, tm_loc->tm_hour,
+			tm_loc->tm_min, tm_loc->tm_sec);
+
+	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return BASE_RET_SUCCESS;
+}
+/*******************************************************************************
+* @brief		: vShowTime(int signo)
+* @param		: int signo
+* @retval		: void
+* @note 		: timer call the function
+*******************************************************************************/
+void vShowTime(void* pvarg){
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+	LONG lStrLen;
+	CHAR pcTime[256];
+	CHAR* pcTimeStr=pcTime;
+	 lBASE_MW_getTimeString(pcTimeStr, &lStrLen);
+	if(lTimerFlag &COMM_BIT(BASE_RES_HD1080)) {
+		eRet=eBASE_MW_OVERLAY_ShowTime(&gsOverlayAttr, pcTimeStr, lStrLen, BASE_RES_HD1080);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet) {
+			debug_info("%s: chn0 show time error with %#x!\n", __FUNCTION__, eRet);
+			return;
+		}
+	}
+	if(lTimerFlag &COMM_BIT(BASE_RES_HD720)) {
+		eRet=eBASE_MW_OVERLAY_ShowTime(&gsOverlayAttr, pcTimeStr, lStrLen, BASE_RES_HD720);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet) {
+			debug_info("%s: chn1 show time error with %#x!\n", __FUNCTION__, eRet);
+			return;
+		}
+	}
+	if(lTimerFlag &COMM_BIT(BASE_RES_SD480)) {
+		eRet=eBASE_MW_OVERLAY_ShowTime(&gsOverlayAttr, pcTimeStr, lStrLen, BASE_RES_SD480);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet) {
+			debug_info("%s: chn2 show time error with %#x!\n", __FUNCTION__, eRet);
+	        	return;
+	    	}
+	}
+           return;
+}
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_ShowBmp(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: show bmp picture on region
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_ShowBmp(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+{
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+
+	/*bmp*/
+	CHAR* pcString = psOverlayAttr->cOsdString;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+			
+		/*get bmp name*/
+		if(psOverlayAttr->lShowType== BASE_MW_OVERLAY_PICTURE) {
+			
+			/*show picture*/
+			eRet=eBASE_MW_OVERLAY_ShowPicture(psOverlayAttr, pcString);
+		    	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		    	{
+		        	debug_info("%s: load bmp failed with %#x!\n", __FUNCTION__, eRet);
+		        	return BASE_MW_OVERLAY_SHOWPICTURE_FAIL;
+		    	}
+		}else if(psOverlayAttr->lShowType == BASE_MW_OVERLAY_STRING) {
+		
+			/*show string*/
+			eRet=eBASE_MW_OVERLAY_ShowString(psOverlayAttr, pcString);
+		    	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		    	{
+		        	debug_info("%s: show string failed with %#x!\n", __FUNCTION__, eRet);
+		        	return BASE_MW_OVERLAY_SHOWSTRING_FAIL;
+		    	}
+				
+		}else if(psOverlayAttr->lShowType == BASE_MW_OVERLAY_TIME) {
+			printf("==========%s\n",pcString);
+			/*show time*/	
+			if(!strcmp((char*)pcString, "start")) {
+				if(-1 != gsHandle[psOverlayAttr->lGroupCh]) {
+					printf("group ch[%ld] has already show time\n",psOverlayAttr->lGroupCh);
+					return BASE_MW_OVERLAY_FAIL;
+				}
+				
+				if(BASE_RES_HD1080 == psOverlayAttr->lGroupCh)
+					lTimerFlag |= COMM_BIT(BASE_RES_HD1080);
+				if(BASE_RES_HD720== psOverlayAttr->lGroupCh)
+					lTimerFlag |= COMM_BIT(BASE_RES_HD720);
+				if(BASE_RES_SD480== psOverlayAttr->lGroupCh)
+					lTimerFlag |= COMM_BIT(BASE_RES_SD480);
+				
+				eRet=eCOMM_TIMER_Init(1,vShowTime, NULL, &lTimerId[psOverlayAttr->lGroupCh]);
+			    	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+			    	{
+			        	debug_info("%s: timer init error %#x!\n", __FUNCTION__, eRet);
+			        	return BASE_MW_OVERLAY_FAIL;
+			    	}
+				psOverlayAttr->sOverlayUse[psOverlayAttr->lRgnHandle].eShowTimeState[psOverlayAttr->lGroupCh]=eBASE_MW_IS_SHOWTIME;
+			} else if (!strcmp((char*)pcString, "stop")){
+				if(!((lTimerFlag &COMM_BIT(BASE_RES_HD1080)) || (lTimerFlag &COMM_BIT(BASE_RES_HD720)) || (lTimerFlag &COMM_BIT(BASE_RES_SD480)))) {
+					debug_info("[%s:] it hasn't started show time!\n", __FUNCTION__);
+					return BASE_MW_OVERLAY_FAIL;
+				}
+
+				if(BASE_RES_HD1080 == psOverlayAttr->lGroupCh)
+					lTimerFlag &= (~ COMM_BIT(BASE_RES_HD1080));
+				if(BASE_RES_HD720== psOverlayAttr->lGroupCh)
+					lTimerFlag &= (~ COMM_BIT(BASE_RES_HD720));
+				if(BASE_RES_SD480== psOverlayAttr->lGroupCh)
+					lTimerFlag &= (~ COMM_BIT(BASE_RES_SD480));
+				eCOMM_TIMER_Deinit(lTimerId[psOverlayAttr->lGroupCh]);
+				
+				/* stop region that show time and restore some parameters  */
+				psOverlayAttr->lRgnHandle=gsHandle[psOverlayAttr->lGroupCh]-(6<<psOverlayAttr->lUID)-(4<<psOverlayAttr->lGroupCh);
+				eBASE_MW_OVERLAY_STOP(psOverlayAttr);
+				lHandleFirst[psOverlayAttr->lGroupCh]=1;
+				lCoordinateFirst[psOverlayAttr->lGroupCh]=1;
+				gsHandle[psOverlayAttr->lGroupCh]=-1;
+			} else {
+				debug_info("[%s:] this string cann't control time!\n", __FUNCTION__);
+				return BASE_MW_OVERLAY_FAIL;
+			}
+			
+		}
+
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_changeAttr(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: change region attr handle
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_changeAttr(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet=BASE_MW_OVERLAY_SUCCESS;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+	
+		/*change static attr*/
+		if(BASE_MW_OVERLAY_STATIC_ATTR== psOverlayAttr->eAttrType)
+		{
+	        	eRet = eBASE_MW_OVERLAY_ChgStaticAttr(psOverlayAttr);
+	        	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+	        	{
+	           		debug_info("%s: change region(%ld) attr failed with %d!\n",__FUNCTION__, psOverlayAttr->lRgnHandle, eRet);
+	            		return BASE_MW_OVERLAY_CHANGE_STATICATTR_FAIL;
+	        	}
+		}
+		
+		/*change dynamic attr*/
+		if(BASE_MW_OVERLAY_DYNAMIC_ATTR == psOverlayAttr->eAttrType)
+		{
+	        	eRet = eBASE_MW_OVERLAY_ChgDynamicAttr(psOverlayAttr);
+	        	if(BASE_MW_OVERLAY_SUCCESS != eRet)
+	        	{
+	           		 debug_info("%s: change region(%ld) attr failed with %d!\n",__FUNCTION__, psOverlayAttr->lRgnHandle, eRet);
+	            		 return BASE_MW_OVERLAY_CHANGE_DYNAMICATTR_FAIL;
+	        	}
+		}
+
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+#if 0
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_STOP(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: destroy region handle
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_STOP(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet = BASE_MW_OVERLAY_SUCCESS;
+	LONG lRegionTmp;
+	LONG lViChNum;
+	sBASE_MW_OVERLAY_USE* psUse=NULL;
+	sBASE_MW_OVERLAY_ATTR* psAttr=psOverlayAttr;
+
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+	
+		if(psAttr->lRgnHandle == BASE_MW_OVERLAY_ALLREGION) {
+			/*stop region of all the vi channel*/
+			for(lViChNum=0;lViChNum<3;lViChNum++) {
+				for(lRegionTmp=0; lRegionTmp!=BASE_MW_OVERLAY_REGIONCNT; lRegionTmp++) {
+					psUse = psOverlayAttr->sOverlayUse+ lRegionTmp;
+					if(psUse->eState[lViChNum] != BASE_MW_OVERLAY_ISSTART) 
+						continue;
+					eRet=eBASE_MW_OVERLAY_STOP(psOverlayAttr,lViChNum, psUse);
+				}
+				glViRegNum[lViChNum]=0;
+			}
+		}else {
+			/*stop a select region*/
+			psUse = psOverlayAttr->sOverlayUse+psAttr->lRgnHandle;
+			if(psUse->eState[psOverlayAttr->lViCh] == BASE_MW_OVERLAY_ISSTART && psUse->lUID[psOverlayAttr->lViCh] == psOverlayAttr->lUID) {
+				lViChNum=psOverlayAttr->lViCh;
+				eRet=eBASE_MW_OVERLAY_STOP(psOverlayAttr,lViChNum, psUse);
+				glViRegNum[psOverlayAttr->lViCh]--;
+			}else {
+				printf("this region have not create!\n");
+				return BASE_MW_OVERLAY_FAIL;
+			}
+		}
+		
+ 	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+#endif
+/*******************************************************************************
+* @brief		: eBASE_MW_OVERLAY_STOP(sBASE_MW_OVERLAY_ATTR* psOverlayAttr)
+* @param		: sBASE_MW_OVERLAY_ATTR* psOverlayAttr
+* @retval		: eBASE_MW_OVERLAY_ERROR
+* @note 		: destroy a region 
+*******************************************************************************/
+eBASE_MW_OVERLAY_ERROR eBASE_MW_OVERLAY_STOP(sBASE_MW_OVERLAY_ATTR* psOverlayAttr) {
+	eBASE_MW_OVERLAY_ERROR eRet = BASE_MW_OVERLAY_SUCCESS;
+	RGN_HANDLE sHandle;
+	debug_log_funcIn();
+
+	/*****************************************/
+	{
+	
+		/* detach */
+		psOverlayAttr->sOverlayChn.s32ChnId = lChnID[psOverlayAttr->lGroupCh];
+		sHandle=BASE_MW_OVERLAY_GET_RGN_HANDLE(psOverlayAttr->lUID,psOverlayAttr->lGroupCh,psOverlayAttr->lRgnHandle);
+		
+		eRet = HI_MPI_RGN_DetachFrmChn(sHandle, &(psOverlayAttr->sOverlayChn));
+		if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		{
+			debug_info("[%s:%d]:region[%d] detach for vi ch[%d] error,ret=%#x!\n",__FUNCTION__,
+						__LINE__,	sHandle,psOverlayAttr->sOverlayChn.s32ChnId,eRet);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+
+		/* destory region */
+	   	eRet = HI_MPI_RGN_Destroy(sHandle);
+		if(BASE_MW_OVERLAY_SUCCESS != eRet)
+		{
+			debug_info("[%s:%d]:region destory for vi ch[%d] error,ret=%#x!\n",__FUNCTION__,
+						__LINE__,psOverlayAttr->sOverlayChn.s32ChnId,eRet);
+			return BASE_MW_OVERLAY_FAIL;
+		}
+		psOverlayAttr->sOverlayUse[psOverlayAttr->lRgnHandle].eState[psOverlayAttr->lGroupCh] = BASE_MW_OVERLAY_NOTUSE;
+		glViRegNum[psOverlayAttr->lGroupCh]--;
+
+	}
+	/*****************************************/
+
+	debug_log_funcOut();
+	
+	return eRet;
+}
+
+
+#ifdef __cplusplus
+	}
+#endif

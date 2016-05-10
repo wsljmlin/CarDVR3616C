@@ -1,0 +1,162 @@
+# Hisilicon Hi3518 sample Makefile.param
+
+ifeq ($(PARAM_FILE), )
+     PARAM_FILE:=../Makefile.param
+     include $(PARAM_FILE)
+endif
+
+# Define cross compiler
+export CROSS?=arm-hisiv100-linux-
+
+#define workspace
+export WORKDIR:=$(PWD)
+
+export CC:=$(CROSS)gcc
+export AR:=$(CROSS)ar
+export CXX:=$(CROSS)g++
+
+################# select sensor type for your sample ####################
+#SENSOR_TYPE ?= APTINA_AR0130_DC_720P_30FPS
+#SENSOR_TYPE ?= SONY_ICX692_DC_720P_30FPS
+#SENSOR_TYPE ?= SONY_IMX104_DC_720P_30FPS
+#SENSOR_TYPE ?= SONY_IMX138_DC_720P_30FPS
+SENSOR_TYPE ?= SONY_IMX122_DC_1080P_30FPS
+#SENSOR_TYPE ?= SONY_IMX236_DC_1080P_30FPS
+#SENSOR_TYPE ?= APTINA_9M034_DC_720P_30FPS
+#SENSOR_TYPE ?= APTINA_MT9P006_DC_1080P_30FPS
+#SENSOR_TYPE ?= OMNI_OV9712_DC_720P_30FPS
+#SENSOR_TYPE ?= OMNI_OV2710_DC_1080P_30FPS
+#SENSOR_TYPE ?= SOI_H22_DC_720P_30FPS
+#SENSOR_TYPE ?= HIMAX_1375_DC_720P_30FPS
+#SENSOR_TYPE ?= APTINA_AR0330_DC_1080P_30FPS
+#SENSOR_TYPE ?= PIXELPLUS_3100K_DC_720P_30FPS
+
+SENSOR_LIBS := $(REL_LIB)/libisp.a
+
+ifeq ($(SENSOR_TYPE), APTINA_AR0130_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_ar0130_720p.a
+endif
+
+ifeq ($(SENSOR_TYPE), PANASONIC_MN34031_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_mn34031_720p.a
+endif
+
+ifeq ($(SENSOR_TYPE), SONY_ICX692_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_icx692.a
+endif
+
+ifeq ($(SENSOR_TYPE), SONY_IMX104_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_imx104.a
+endif
+
+ifeq ($(SENSOR_TYPE), SONY_IMX138_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_imx138.a
+endif
+
+ifeq ($(SENSOR_TYPE), APTINA_9M034_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_9m034.a
+endif
+
+ifeq ($(SENSOR_TYPE), OMNI_OV9712_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_ov9712.a
+endif
+
+ifeq ($(SENSOR_TYPE), OMNI_OV2710_DC_1080P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_ov2710.a
+endif
+
+ifeq ($(SENSOR_TYPE), SOI_H22_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_soih22.a
+endif
+
+ifeq ($(SENSOR_TYPE), HIMAX_1375_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_himax1375.a
+endif
+
+ifeq ($(SENSOR_TYPE), SONY_IMX122_DC_1080P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_imx122.a
+endif
+
+ifeq ($(SENSOR_TYPE), APTINA_MT9P006_DC_1080P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_mt9p006.a
+endif
+
+ifeq ($(SENSOR_TYPE), APTINA_AR0330_DC_1080P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_ar0330_1080p.a
+endif
+
+ifeq ($(SENSOR_TYPE), SONY_IMX236_DC_1080P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_imx236.a
+endif
+
+ifeq ($(SENSOR_TYPE), PIXELPLUS_3100K_DC_720P_30FPS)
+    SENSOR_LIBS += $(REL_LIB)/libsns_po3100k.a
+endif
+
+#########################################################################
+
+COMMON_DIR:=$(PWD)/../common
+
+INC_FLAGS := -I$(COMMON_DIR)
+INC_FLAGS += -I$(REL_INC)
+INC_FLAGS += -I$(MPP_PATH)/component/acodec
+
+ifeq ($(MPP_BUILD), y)
+INC_FLAGS += -I$(MPP_PATH)/$(EXTDRV)/tw2865
+else
+	INC_FLAGS += -I$(MPP_PATH)/extdrv/tw2865
+endif
+
+ifeq ($(CONFIG_ISP), y)
+ISP_VERSION := ISP_V1
+else
+ISP_VERSION := ISP_V2
+SENSOR_LIBS += $(REL_LIB)/lib_hiae.a
+SENSOR_LIBS += $(REL_LIB)/lib_hiawb.a
+SENSOR_LIBS += $(REL_LIB)/lib_hiaf.a
+endif
+
+#*********audio codec LIB define*******************
+AUDIO_LIBA := $(REL_LIB)/libVoiceEngine.a	\
+		$(REL_LIB)/libaec.a	\
+		$(REL_LIB)/libresampler.a	\
+		$(REL_LIB)/libanr.a
+		
+#***************RTP LIB define**********************
+
+LD_RTPLIB ?= -L$(WORKDIR)/base/rtpLib -ljrtp-3.5.0 -ljthread-1.2.1
+
+LIBS := $(REL_LIB)/libmpi.a
+LIBS += $(SENSOR_LIBS) \
+	$(LD_RTPLIB) \
+	$(AUDIO_LIBA)
+
+#**********HEAD FILE***********************
+
+INC_FLAGS += -I$(REL_INC)\
+		-I$(WORKDIR)/include\
+		-I$(WORKDIR)/common\
+		-I$(WORKDIR)/base\
+		-I$(WORKDIR)/ctrl\
+		-I$(WORKDIR)/base/rtpInclude
+
+CFLAGS := -Wall -O2 $(INC_FLAGS) -D$(HIARCH) -DHICHIP=$(HICHIP) -DSENSOR_TYPE=$(SENSOR_TYPE) -D$(HIDBG) -D$(HI_FPGA) -lpthread -lm -D$(ISP_VERSION)
+
+CXXFLAGS += $(CFLAGS)
+
+#********base,ctrl and common obj define*************
+export BASE := $(WORKDIR)/base
+BASE_CCSRC := $(wildcard $(BASE)/*.c)
+BASE_CCOBJ := $(BASE_CCSRC:%.c=%.o)
+BASE_CXXSRC := $(wildcard $(BASE)/*.cpp)
+BASE_CXXOBJ := $(BASE_CXXSRC:%.cpp=%.o)
+BASE_OBJ   := $(BASE_CXXOBJ) $(BASE_CCOBJ)
+
+export CTRL := $(WORKDIR)/ctrl
+CTRL_SRC   := $(wildcard $(CTRL)/*.c)
+CTRL_OBJ := $(CTRL_SRC:%.c=%.o)
+
+export COMM := $(WORKDIR)/common
+COMM_SRC := $(wildcard $(COMM)/*.c)
+COMM_OBJ := $(COMM_SRC:%.c=%.o)
+
